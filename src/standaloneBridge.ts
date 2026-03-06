@@ -19,6 +19,16 @@ const SOUND_STORAGE_KEY = 'pixel-agents-sound'
 /** Whether dynamic furniture assets (catalog + sprites) loaded successfully */
 let furnitureAssetsLoaded = false
 
+/** Hardcoded furniture types that work without the dynamic catalog */
+const BUILTIN_FURNITURE_TYPES = new Set(['desk', 'bookshelf', 'plant', 'cooler', 'whiteboard', 'chair', 'pc', 'lamp'])
+
+/** Check if a layout contains furniture types that require the dynamic catalog */
+function layoutNeedsCatalog(layout: Record<string, unknown>): boolean {
+  const furniture = layout.furniture as Array<{ type: string }> | undefined
+  if (!furniture || furniture.length === 0) return false
+  return furniture.some((f) => !BUILTIN_FURNITURE_TYPES.has(f.type))
+}
+
 function saveLayout(layout: Record<string, unknown>): void {
   try {
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout))
@@ -77,6 +87,11 @@ export async function initStandaloneBridge(): Promise<void> {
           const text = await file.text()
           const imported = JSON.parse(text) as Record<string, unknown>
           if (imported.version !== 1 || !Array.isArray(imported.tiles)) return
+          // Reject layouts with ASSET_* furniture when catalog is not available
+          if (!furnitureAssetsLoaded && layoutNeedsCatalog(imported)) {
+            console.warn('[Bridge] Imported layout requires furniture catalog that is not loaded — skipping')
+            return
+          }
           saveLayout(imported)
           postToWebview({ type: 'layoutLoaded', layout: imported })
         } catch { /* invalid file */ }
@@ -158,7 +173,14 @@ async function handleWebviewReady(): Promise<void> {
       postToWebview({ type: 'layoutLoaded', layout: null })
     }
   } else {
-    // No furniture catalog — use hardcoded default layout with built-in sprites
+    // No furniture catalog — use hardcoded default layout with built-in sprites.
+    // Clear stale saved layout that references ASSET_* types to prevent it from
+    // accumulating in localStorage and being accidentally exported.
+    if (savedLayout && layoutNeedsCatalog(savedLayout)) {
+      try { localStorage.removeItem(LAYOUT_STORAGE_KEY) } catch { /* ignore */ }
+      try { localStorage.removeItem(SEATS_STORAGE_KEY) } catch { /* ignore */ }
+      console.log('[Bridge] Cleared stale layout from localStorage (requires missing furniture catalog)')
+    }
     postToWebview({ type: 'layoutLoaded', layout: null })
   }
 
