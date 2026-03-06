@@ -16,6 +16,9 @@ const LAYOUT_STORAGE_KEY = 'pixel-agents-layout'
 const SEATS_STORAGE_KEY = 'pixel-agents-seats'
 const SOUND_STORAGE_KEY = 'pixel-agents-sound'
 
+/** Whether dynamic furniture assets (catalog + sprites) loaded successfully */
+let furnitureAssetsLoaded = false
+
 function saveLayout(layout: Record<string, unknown>): void {
   try {
     localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout))
@@ -119,6 +122,7 @@ async function handleWebviewReady(): Promise<void> {
   try {
     const assets = await loadFurnitureAssets()
     if (assets) {
+      furnitureAssetsLoaded = true
       postToWebview({
         type: 'furnitureAssetsLoaded',
         catalog: assets.catalog,
@@ -140,15 +144,29 @@ async function handleWebviewReady(): Promise<void> {
   }
 
   // Load layout (saved or default)
+  // The default-layout.json uses ASSET_* furniture IDs that require the dynamic
+  // furniture catalog. If the catalog didn't load, skip it and let the app fall
+  // back to the hardcoded createDefaultLayout() which has embedded sprites.
   const savedLayout = loadSavedLayout()
-  if (savedLayout) {
+  if (savedLayout && furnitureAssetsLoaded) {
     postToWebview({ type: 'layoutLoaded', layout: savedLayout })
-  } else {
+  } else if (furnitureAssetsLoaded) {
     const defaultLayout = await loadDefaultLayout()
     if (defaultLayout) {
       postToWebview({ type: 'layoutLoaded', layout: defaultLayout })
     } else {
       postToWebview({ type: 'layoutLoaded', layout: null })
+    }
+  } else {
+    // No furniture catalog — use hardcoded default layout with built-in sprites
+    postToWebview({ type: 'layoutLoaded', layout: null })
+  }
+
+  // Auto-spawn demo agents if none exist so the scene isn't empty
+  if (Object.keys(agents).length === 0) {
+    const INITIAL_AGENT_COUNT = 3
+    for (let i = 0; i < INITIAL_AGENT_COUNT; i++) {
+      createDemoAgent()
     }
   }
 }
